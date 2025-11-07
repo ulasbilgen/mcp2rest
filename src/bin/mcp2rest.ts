@@ -1,0 +1,438 @@
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs/promises';
+import { ConfigManager } from '../config/ConfigManager.js';
+import { Gateway } from '../gateway/Gateway.js';
+import { APIServer } from '../api/APIServer.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+const program = new Command();
+
+program
+  .name('mcp2rest')
+  .description('A standalone Node.js daemon that manages multiple MCP servers and exposes their tools via REST API')
+  .version('0.1.0');
+
+// Start command - starts the gateway daemon
+program
+  .command('start')
+  .description('Start the MCP Gateway daemon')
+  .option('-c, --config <path>', 'Path to configuration file')
+  .action(async (options) => {
+    try {
+      // Check if PM2 service is already running (skip check if running under PM2)
+      if (!process.env.PM2_HOME) {
+        try {
+          const { stdout } = await execAsync('npx pm2 describe mcp2rest');
+          if (stdout.includes('online')) {
+            console.log('⚠️  Warning: MCP Gateway is already running as a PM2 service');
+            console.log('Use "mcp2rest service status" to check the service status');
+            console.log('Use "mcp2rest service uninstall" to remove the service before starting in foreground mode');
+            process.exit(1);
+          }
+        } catch (error) {
+          // Service not found or not running, continue with foreground start
+        }
+      }
+      
+      console.log('Starting MCP Gateway...');
+      
+      // Create ConfigManager with optional custom config path
+      const configManager = new ConfigManager(options.config);
+      
+      // Create Gateway instance
+      const gateway = new Gateway(configManager);
+      
+      // Initialize gateway and connect to all configured servers
+      await gateway.initialize();
+      
+      // Get configuration to determine port
+      const config = await configManager.load();
+      const port = config.gateway.port;
+      const host = config.gateway.host;
+      
+      // Create and start API server
+      const apiServer = new APIServer(gateway);
+      await apiServer.start(port, host);
+      
+      console.log(`Gateway started on port ${port}`);
+      
+      // Write PID file for stop command
+      const configDir = path.join(os.homedir(), '.mcp2rest');
+      const pidFile = path.join(configDir, 'gateway.pid');
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(pidFile, process.pid.toString(), 'utf-8');
+      
+      // Handle graceful shutdown
+      const shutdown = async () => {
+        console.log('\nShutting down...');
+        
+        // Remove PID file
+        try {
+          await fs.unlink(pidFile);
+        } catch (error) {
+          // Ignore error if file doesn't exist
+        }
+        
+        await apiServer.stop();
+        await gateway.shutdown();
+        process.exit(0);
+      };
+      
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+      
+    } catch (error: any) {
+      console.error('Failed to start gateway:', error.message);
+      process.exit(1);
+    }
+  });
+
+// Stop command - stops the gateway daemon
+program
+  .command('stop')
+  .description('Stop the MCP Gateway daemon')
+  .action(async () => {
+    try {
+      console.log('Stopping MCP Gateway...');
+      
+      // First check if running as PM2 service
+      let stoppedPM2 = false;
+      try {
+        const { stdout } = await execAsync('npx pm2 describe mcp2rest');
+        if (stdout.includes('online')) {
+          console.log('Detected PM2 service, stopping...');
+          await execAsync('npx pm2 stop mcp2rest');
+          console.log('✓ PM2 service stopped successfully');
+          console.log('Note: Service will restart automatically. Use "mcp2rest service uninstall" to remove it permanently.');
+          stoppedPM2 = true;
+        }
+      } catch (error) {
+        // Not running as PM2 service, continue with PID file approach
+      }
+      
+      // If not stopped via PM2, try PID file approach
+      if (!stoppedPM2) {
+        // Get PID file path
+        const configDir = path.join(os.homedir(), '.mcp2rest');
+        const pidFile = path.join(configDir, 'gateway.pid');
+        
+        // Check if PID file exists
+        try {
+          await fs.access(pidFile);
+        } catch (error) {
+          console.log('Gateway is not running (PID file not found)');
+          process.exit(0);
+        }
+        
+        // Read PID from file
+        const pidContent = await fs.readFile(pidFile, 'utf-8');
+        const pid = parseInt(pidContent.trim(), 10);
+        
+        if (isNaN(pid)) {
+          console.error('Invalid PID in file');
+          process.exit(1);
+        }
+        
+        // Send SIGTERM to the process
+        try {
+          process.kill(pid, 'SIGTERM');
+          console.log(`Sent SIGTERM to process ${pid}`);
+          
+          // Wait a moment and check if process is still running
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          try {
+            // Check if process is still alive (will throw if not)
+            process.kill(pid, 0);
+            console.log('Gateway is shutting down...');
+          } catch (error) {
+            console.log('Gateway stopped successfully');
+          }
+          
+          // Remove PID file
+          try {
+            await fs.unlink(pidFile);
+          } catch (error) {
+            // Ignore error if file already removed
+          }
+          
+        } catch (error: any) {
+          if (error.code === 'ESRCH') {
+            console.log('Gateway process not found (already stopped)');
+            // Clean up stale PID file
+            await fs.unlink(pidFile);
+          } else {
+            throw error;
+          }
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('Failed to stop gateway:', error.message);
+      process.exit(1);
+    }
+  });
+
+// Service command group
+const service = program
+  .command('service')
+  .description('Manage MCP Gateway as a system service');
+
+// Service install command
+service
+  .command('install')
+  .description('Install MCP Gateway as a system service using PM2')
+  .action(async () => {
+    try {
+      console.log('Installing MCP Gateway service...');
+      
+      // Ensure logs directory exists
+      const configDir = path.join(os.homedir(), '.mcp2rest');
+      const logsDir = path.join(configDir, 'logs');
+      await fs.mkdir(logsDir, { recursive: true });
+      
+      // Start the gateway with PM2
+      console.log('Starting gateway with PM2...');
+      const { stdout: startOutput } = await execAsync('npx pm2 start ecosystem.config.js');
+      console.log(startOutput);
+      
+      // Save PM2 process list
+      console.log('Saving PM2 process list...');
+      await execAsync('npx pm2 save');
+      
+      // Setup PM2 startup script (optional, may require sudo)
+      console.log('Configuring auto-start on boot...');
+      try {
+        const { stdout: startupOutput } = await execAsync('npx pm2 startup');
+        console.log(startupOutput);
+      } catch (error: any) {
+        console.log('⚠️  Note: Auto-start on boot requires additional setup.');
+        console.log('Run "pm2 startup" manually and follow the instructions if you want the gateway to start on boot.');
+      }
+      
+      // Get service status
+      const { stdout: statusOutput } = await execAsync('npx pm2 describe mcp2rest');
+      
+      console.log('\n✓ MCP Gateway service installed successfully!');
+      console.log('\nService Status:');
+      console.log(statusOutput);
+      console.log('\nUse "mcp2rest service status" to check the service status.');
+      
+    } catch (error: any) {
+      console.error('✗ Failed to install service:', error.message);
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+      process.exit(1);
+    }
+  });
+
+// Service uninstall command
+service
+  .command('uninstall')
+  .description('Uninstall MCP Gateway service from PM2')
+  .action(async () => {
+    try {
+      console.log('Uninstalling MCP Gateway service...');
+      
+      // Check if the service exists
+      try {
+        await execAsync('npx pm2 describe mcp2rest');
+      } catch (error) {
+        console.log('✓ MCP Gateway service is not installed');
+        process.exit(0);
+      }
+      
+      // Stop the gateway process
+      console.log('Stopping gateway process...');
+      try {
+        await execAsync('npx pm2 stop mcp2rest');
+      } catch (error) {
+        // Process might already be stopped, continue
+      }
+      
+      // Delete from PM2 process list
+      console.log('Removing from PM2...');
+      await execAsync('npx pm2 delete mcp2rest');
+      
+      // Save PM2 process list
+      await execAsync('npx pm2 save');
+      
+      console.log('\n✓ MCP Gateway service uninstalled successfully!');
+      console.log('The gateway will no longer start automatically on boot.');
+      
+    } catch (error: any) {
+      console.error('✗ Failed to uninstall service:', error.message);
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+      process.exit(1);
+    }
+  });
+
+// Service status command
+service
+  .command('status')
+  .description('Check MCP Gateway service status')
+  .action(async () => {
+    try {
+      // Get process info from PM2
+      const { stdout } = await execAsync('npx pm2 describe mcp2rest');
+      
+      // Parse the output to extract key information
+      const lines = stdout.split('\n');
+      let status = 'unknown';
+      let uptime = 'N/A';
+      let memory = 'N/A';
+      let cpu = 'N/A';
+      let restarts = 'N/A';
+      
+      for (const line of lines) {
+        if (line.includes('status')) {
+          const match = line.match(/│\s*status\s*│\s*(\w+)\s*│/);
+          if (match) status = match[1];
+        } else if (line.includes('uptime')) {
+          const match = line.match(/│\s*uptime\s*│\s*(.+?)\s*│/);
+          if (match) uptime = match[1].trim();
+        } else if (line.includes('memory')) {
+          const match = line.match(/│\s*memory\s*│\s*(.+?)\s*│/);
+          if (match) memory = match[1].trim();
+        } else if (line.includes('cpu')) {
+          const match = line.match(/│\s*cpu\s*│\s*(.+?)\s*│/);
+          if (match) cpu = match[1].trim();
+        } else if (line.includes('restarts')) {
+          const match = line.match(/│\s*restarts\s*│\s*(\d+)\s*│/);
+          if (match) restarts = match[1];
+        }
+      }
+      
+      console.log('\nMCP Gateway Service Status:');
+      console.log('═══════════════════════════════════════');
+      console.log(`Status:   ${status === 'online' ? '🟢' : '🔴'} ${status}`);
+      console.log(`Uptime:   ${uptime}`);
+      console.log(`Memory:   ${memory}`);
+      console.log(`CPU:      ${cpu}`);
+      console.log(`Restarts: ${restarts}`);
+      console.log('═══════════════════════════════════════\n');
+      
+    } catch (error: any) {
+      if (error.message.includes('not found') || error.stderr?.includes('not found') || error.stderr?.includes("doesn't exist")) {
+        console.log('\n✗ MCP Gateway service is not installed');
+        console.log('Install it with: mcp2rest service install\n');
+      } else {
+        console.error('✗ Failed to get service status:', error.message);
+        if (error.stderr) {
+          console.error(error.stderr);
+        }
+      }
+      process.exit(1);
+    }
+  });
+
+// Service logs command
+service
+  .command('logs')
+  .description('View MCP Gateway service logs')
+  .option('-n, --lines <number>', 'Number of lines to display', '100')
+  .option('-f, --follow', 'Follow log output in real-time')
+  .action(async (options) => {
+    try {
+      // Check if service exists
+      try {
+        await execAsync('npx pm2 describe mcp2rest');
+      } catch (error) {
+        console.log('✗ MCP Gateway service is not installed');
+        console.log('Install it with: mcp2rest service install');
+        process.exit(1);
+      }
+      
+      // Build PM2 logs command
+      let logsCommand = 'npx pm2 logs mcp2rest';
+      
+      if (options.follow) {
+        // For follow mode, use spawn to stream output
+        const { spawn } = await import('child_process');
+        const logsProcess = spawn('npx', ['pm2', 'logs', 'mcp2rest', '--lines', options.lines], {
+          stdio: 'inherit'
+        });
+        
+        // Handle process termination
+        process.on('SIGINT', () => {
+          logsProcess.kill();
+          process.exit(0);
+        });
+        
+        logsProcess.on('exit', (code) => {
+          process.exit(code || 0);
+        });
+      } else {
+        // For non-follow mode, just display the logs
+        logsCommand += ` --lines ${options.lines} --nostream`;
+        const { stdout } = await execAsync(logsCommand);
+        console.log(stdout);
+      }
+      
+    } catch (error: any) {
+      console.error('✗ Failed to retrieve logs:', error.message);
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+      process.exit(1);
+    }
+  });
+
+// Add command - adds a new MCP server
+program
+  .command('add <name> <package>')
+  .description('Add a new MCP server to the gateway')
+  .option('-a, --args <args...>', 'Additional arguments for the server')
+  .action(async (name: string, pkg: string, options) => {
+    try {
+      console.log(`Adding server '${name}' (${pkg})...`);
+      
+      // Get configuration to determine API port
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+      const port = config.gateway.port;
+      const host = config.gateway.host;
+      
+      // Send POST request to /servers endpoint
+      const response = await fetch(`http://${host}:${port}/servers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name,
+          package: pkg,
+          args: options.args || []
+        })
+      });
+      
+      const data = await response.json() as any;
+      
+      if (response.ok) {
+        console.log(`✓ ${data.message}`);
+      } else {
+        console.error(`✗ Failed to add server: ${data.error.message}`);
+        process.exit(1);
+      }
+      
+    } catch (error: any) {
+      if (error.code === 'ECONNREFUSED') {
+        console.error('✗ Gateway is not running. Start it with: mcp2rest start');
+      } else {
+        console.error('✗ Failed to add server:', error.message);
+      }
+      process.exit(1);
+    }
+  });
+
+program.parse(process.argv);
