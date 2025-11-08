@@ -6,8 +6,7 @@ import * as os from 'os';
 import * as fs from 'fs/promises';
 import { readFileSync } from 'fs';
 import { ConfigManager } from '../config/ConfigManager.js';
-import { Gateway } from '../gateway/Gateway.js';
-import { APIServer } from '../api/APIServer.js';
+import { startServer } from './server.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -47,50 +46,31 @@ program
         }
       }
       
-      console.log('Starting MCP Gateway...');
-      
-      // Create ConfigManager with optional custom config path
-      const configManager = new ConfigManager(options.config);
-      
-      // Create Gateway instance
-      const gateway = new Gateway(configManager);
-      
-      // Initialize gateway and connect to all configured servers
-      await gateway.initialize();
-      
-      // Get configuration to determine port
-      const config = await configManager.load();
-      const port = config.gateway.port;
-      const host = config.gateway.host;
-      
-      // Create and start API server
-      const apiServer = new APIServer(gateway);
-      await apiServer.start(port, host);
-      
-      console.log(`Gateway started on port ${port}`);
-      
-      // Write PID file for stop command
+      // Start the server using the shared server entry point
+      const { gateway, apiServer } = await startServer(options.config);
+
+      // Write PID file for foreground mode process management
       const configDir = path.join(os.homedir(), '.mcp2rest');
       const pidFile = path.join(configDir, 'gateway.pid');
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(pidFile, process.pid.toString(), 'utf-8');
-      
-      // Handle graceful shutdown
+
+      // Enhanced shutdown handler for foreground mode (removes PID file)
       const shutdown = async () => {
         console.log('\nShutting down...');
-        
+
         // Remove PID file
         try {
           await fs.unlink(pidFile);
         } catch (error) {
           // Ignore error if file doesn't exist
         }
-        
+
         await apiServer.stop();
         await gateway.shutdown();
         process.exit(0);
       };
-      
+
       process.on('SIGTERM', shutdown);
       process.on('SIGINT', shutdown);
       
@@ -203,10 +183,51 @@ service
       const configDir = path.join(os.homedir(), '.mcp2rest');
       const logsDir = path.join(configDir, 'logs');
       await fs.mkdir(logsDir, { recursive: true });
-      
-      // Start the gateway with PM2
+
+      // Generate PM2 ecosystem config dynamically
+      console.log('Generating PM2 configuration...');
+
+      // Get absolute path to mcp2rest binary, then derive server.js path
+      const { stdout: mcpPath } = await execAsync('which mcp2rest');
+      const mcpBinaryPathSymlink = mcpPath.trim();
+
+      // Resolve symlinks to get the real path (important for npm link)
+      const mcpBinaryPath = await fs.realpath(mcpBinaryPathSymlink);
+
+      // server.js is in the same directory as mcp2rest binary
+      const serverPath = path.join(path.dirname(mcpBinaryPath), 'server.js');
+
+      const ecosystemConfig = {
+        apps: [{
+          name: 'mcp2rest',
+          script: serverPath,  // Use absolute path to server.js (no CLI overhead)
+          args: '',  // No args needed - server.js starts directly
+          exec_mode: 'fork',  // Use fork mode, not cluster
+          instances: 1,
+          autorestart: true,
+          watch: false,
+          max_memory_restart: '500M',
+          env: {
+            NODE_ENV: 'production'
+          },
+          error_file: path.join(logsDir, 'error.log'),
+          out_file: path.join(logsDir, 'out.log'),
+          log_file: path.join(logsDir, 'combined.log'),
+          time: true,
+          merge_logs: true,
+          log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
+        }]
+      };
+
+      // Write ecosystem file to ~/.mcp2rest/
+      const ecosystemPath = path.join(configDir, 'pm2.ecosystem.config.js');
+      const ecosystemContent = `module.exports = ${JSON.stringify(ecosystemConfig, null, 2)};`;
+      await fs.writeFile(ecosystemPath, ecosystemContent, 'utf-8');
+      console.log(`✓ PM2 configuration written to ${ecosystemPath}`);
+
+      // Start the gateway with PM2 using generated config
       console.log('Starting gateway with PM2...');
-      const { stdout: startOutput } = await execAsync('npx pm2 start ecosystem.config.js');
+      const { stdout: startOutput } = await execAsync(`npx pm2 start "${ecosystemPath}"`);
       console.log(startOutput);
       
       // Save PM2 process list
@@ -270,7 +291,17 @@ service
       
       // Save PM2 process list
       await execAsync('npx pm2 save');
-      
+
+      // Clean up generated ecosystem file
+      try {
+        const configDir = path.join(os.homedir(), '.mcp2rest');
+        const ecosystemPath = path.join(configDir, 'pm2.ecosystem.config.js');
+        await fs.unlink(ecosystemPath);
+        console.log('✓ Cleaned up PM2 configuration file');
+      } catch (error) {
+        // Ignore if file doesn't exist
+      }
+
       console.log('\n✓ MCP Gateway service uninstalled successfully!');
       console.log('The gateway will no longer start automatically on boot.');
       
