@@ -306,17 +306,18 @@ Common error codes:
 - Node.js >= 18.0.0
 - npm or npx
 
+## Recently Completed ✅
+
+- [x] **Auto-Reconnect**: Automatic reconnection with exponential backoff when MCP servers disconnect
+  - Implemented in `src/gateway/Gateway.ts`
+  - Max 10 reconnection attempts with exponential backoff
+  - Automatic recovery from server crashes
+
+- [x] **DELETE Endpoint**: `DELETE /servers/:name` REST endpoint
+  - Implemented in `src/api/APIServer.ts`
+  - Remove servers dynamically via API
+
 ## TODO
-
-### High Priority
-
-- [ ] **Auto-Reconnect**: Implement auto-reconnect with exponential backoff when MCP servers disconnect
-  - Location: `src/gateway/Gateway.ts`
-  - Strategy: 1s, 2s, 4s delays, max 3 attempts
-
-- [ ] **DELETE Endpoint**: Add `DELETE /servers/:name` REST endpoint
-  - Location: `src/api/APIServer.ts`
-  - Backend method `Gateway.removeServer()` already exists
 
 ### Medium Priority
 
