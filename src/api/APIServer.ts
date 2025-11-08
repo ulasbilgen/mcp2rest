@@ -139,21 +139,48 @@ export class APIServer {
    */
   private async handleAddServer(req: Request, res: Response): Promise<void> {
     try {
-      const { name, package: pkg, args } = req.body;
+      const { name, package: pkg, args, url, transport } = req.body;
 
       // Validate request body
-      if (!name || !pkg) {
+      if (!name) {
         res.status(400).json({
           error: {
             code: ErrorCode.INVALID_ARGUMENTS,
-            message: 'Missing required fields: name and package'
+            message: 'Missing required field: name'
+          }
+        });
+        return;
+      }
+
+      // Validate that either package or url is provided
+      if (!pkg && !url) {
+        res.status(400).json({
+          error: {
+            code: ErrorCode.INVALID_ARGUMENTS,
+            message: 'Must provide either "package" (for stdio) or "url" (for HTTP)'
+          }
+        });
+        return;
+      }
+
+      // Validate transport type if provided
+      if (transport && transport !== 'stdio' && transport !== 'http') {
+        res.status(400).json({
+          error: {
+            code: ErrorCode.INVALID_TRANSPORT,
+            message: 'Invalid transport type. Must be "stdio" or "http"'
           }
         });
         return;
       }
 
       // Add server via gateway
-      await this.gateway.addServer(name, pkg, args);
+      await this.gateway.addServer(name, {
+        package: pkg,
+        args,
+        url,
+        transport
+      });
 
       // Return success response
       res.status(201).json({
@@ -171,6 +198,8 @@ export class APIServer {
       let statusCode = 500;
       if (errorCode === ErrorCode.SERVER_ALREADY_EXISTS) {
         statusCode = 409;
+      } else if (errorCode === ErrorCode.INVALID_CONFIG || errorCode === ErrorCode.INVALID_URL || errorCode === ErrorCode.INVALID_TRANSPORT) {
+        statusCode = 400;
       }
 
       res.status(statusCode).json({

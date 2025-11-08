@@ -427,41 +427,54 @@ service
 
 // Add command - adds a new MCP server
 program
-  .command('add <name> <package>')
+  .command('add <name> <package-or-url>')
   .description('Add a new MCP server to the gateway')
-  .option('-a, --args <args...>', 'Additional arguments for the server')
-  .action(async (name: string, pkg: string, options) => {
+  .option('-t, --transport <type>', 'Transport type: stdio or http (auto-detected if not specified)')
+  .option('-a, --args <args...>', 'Additional arguments for the server (stdio only)')
+  .action(async (name: string, packageOrUrl: string, options) => {
     try {
-      console.log(`Adding server '${name}' (${pkg})...`);
-      
+      // Determine if this is a URL or package based on transport option or pattern
+      const isUrl = options.transport === 'http' || packageOrUrl.startsWith('http://') || packageOrUrl.startsWith('https://');
+      const transport = options.transport || (isUrl ? 'http' : 'stdio');
+
+      console.log(`Adding server '${name}' via ${transport} (${packageOrUrl})...`);
+
       // Get configuration to determine API port
       const configManager = new ConfigManager();
       const config = await configManager.load();
       const port = config.gateway.port;
       const host = config.gateway.host;
-      
+
+      // Build request body based on transport type
+      const requestBody: any = { name, transport };
+
+      if (transport === 'http') {
+        requestBody.url = packageOrUrl;
+      } else {
+        requestBody.package = packageOrUrl;
+        if (options.args) {
+          requestBody.args = options.args;
+        }
+      }
+
       // Send POST request to /servers endpoint
       const response = await fetch(`http://${host}:${port}/servers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          name,
-          package: pkg,
-          args: options.args || []
-        })
+        body: JSON.stringify(requestBody)
       });
-      
+
       const data = await response.json() as any;
-      
+
       if (response.ok) {
         console.log(`✓ ${data.message}`);
       } else {
         console.error(`✗ Failed to add server: ${data.error.message}`);
         process.exit(1);
       }
-      
+
     } catch (error: any) {
       if (error.code === 'ECONNREFUSED') {
         console.error('✗ Gateway is not running. Start it with: mcp2rest start');

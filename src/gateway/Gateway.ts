@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { spawn, ChildProcess } from 'child_process';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { 
@@ -29,6 +30,27 @@ export class Gateway {
     this.configManager = configManager;
     this.config = configManager.getDefaultConfig();
     this.reconnectTimers = new Map();
+  }
+
+  /**
+   * Determine transport type from server configuration
+   */
+  private getTransportType(config: ServerConfig): 'stdio' | 'http' {
+    // Explicit transport specified
+    if (config.transport) {
+      return config.transport;
+    }
+
+    // Infer from config structure
+    if (config.url) {
+      return 'http';
+    }
+
+    if (config.package) {
+      return 'stdio';
+    }
+
+    throw new Error(`${ErrorCode.INVALID_CONFIG}: Cannot determine transport type - must specify either 'url' or 'package'`);
   }
 
   /**
@@ -64,8 +86,10 @@ export class Gateway {
    * Connect to an MCP server
    */
   private async connectServer(name: string, serverConfig: ServerConfig): Promise<void> {
-    console.log(`Connecting to server '${name}' (${serverConfig.package})...`);
-    
+    const transportType = this.getTransportType(serverConfig);
+    const identifier = serverConfig.package || serverConfig.url;
+    console.log(`Connecting to server '${name}' via ${transportType} (${identifier})...`);
+
     // Get or initialize server state
     let serverState = this.servers.get(name);
     if (!serverState) {
@@ -78,30 +102,46 @@ export class Gateway {
       };
       this.servers.set(name, serverState);
     }
-    
+
     try {
-      // Spawn MCP server process using npx
-      const args = [serverConfig.package, ...(serverConfig.args || [])];
-      const serverProcess = spawn('npx', args, {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-      
-      // Create MCP client with stdio transport
-      const transport = new StdioClientTransport({
-        command: 'npx',
-        args: args
-      });
-      
+      // Create transport based on type
+      let transport;
+
+      if (transportType === 'stdio') {
+        // STDIO: Spawn process with npx
+        const args = [serverConfig.package!, ...(serverConfig.args || [])];
+        transport = new StdioClientTransport({
+          command: 'npx',
+          args: args
+        });
+      } else {
+        // HTTP: Connect to external server via SSE
+        if (!serverConfig.url) {
+          throw new Error(`${ErrorCode.INVALID_CONFIG}: HTTP transport requires 'url' field`);
+        }
+
+        // Validate URL format
+        let serverUrl: URL;
+        try {
+          serverUrl = new URL(serverConfig.url);
+        } catch (error: any) {
+          throw new Error(`${ErrorCode.INVALID_URL}: Invalid URL format: ${error.message}`);
+        }
+
+        transport = new StreamableHTTPClientTransport(serverUrl);
+      }
+
+      // Create MCP client (same for both transports)
       const client = new Client({
         name: 'mcp2rest',
         version: '0.1.0'
       }, {
         capabilities: {}
       });
-      
+
       // Connect client to transport
       await client.connect(transport);
-      
+
       // List available tools
       const toolsResponse = await client.listTools();
       const tools: Tool[] = toolsResponse.tools.map((tool: any) => ({
@@ -109,22 +149,22 @@ export class Gateway {
         description: tool.description,
         inputSchema: tool.inputSchema
       }));
-      
+
       // Update server state
       serverState.client = client;
       serverState.tools = tools;
       serverState.status = 'connected';
       serverState.lastConnected = new Date();
       serverState.reconnectAttempts = 0;
-      
+
       // Clear any existing reconnect timer
       this.clearReconnectTimer(name);
-      
+
       // Set up disconnect handler for auto-reconnect
       this.setupDisconnectHandler(name, client);
-      
+
       console.log(`✓ Connected to server '${name}' with ${tools.length} tool(s)`);
-      
+
     } catch (error: any) {
       serverState.status = 'error';
       serverState.lastError = error.message;
@@ -271,18 +311,29 @@ export class Gateway {
    */
   getServerInfo(): ServerInfo[] {
     const serverInfoList: ServerInfo[] = [];
-    
+
     for (const [name, state] of this.servers.entries()) {
-      serverInfoList.push({
+      const transportType = this.getTransportType(state.config);
+
+      const info: ServerInfo = {
         name,
-        package: state.config.package,
+        transport: transportType,
         status: state.status,
         toolCount: state.tools.length,
         error: state.lastError,
         lastConnected: state.lastConnected?.toISOString()
-      });
+      };
+
+      // Add transport-specific fields
+      if (transportType === 'stdio') {
+        info.package = state.config.package;
+      } else {
+        info.url = state.config.url;
+      }
+
+      serverInfoList.push(info);
     }
-    
+
     return serverInfoList;
   }
 
@@ -302,27 +353,41 @@ export class Gateway {
   /**
    * Add a new server dynamically
    */
-  async addServer(name: string, pkg: string, args?: string[]): Promise<void> {
+  async addServer(
+    name: string,
+    options: {
+      package?: string;
+      args?: string[];
+      url?: string;
+      transport?: 'stdio' | 'http';
+    }
+  ): Promise<void> {
     // Check if server already exists
     if (this.servers.has(name)) {
       throw new Error(`${ErrorCode.SERVER_ALREADY_EXISTS}: Server '${name}' already exists`);
     }
-    
+
     const serverConfig: ServerConfig = {
       name,
-      package: pkg,
-      args
+      ...options
     };
-    
+
+    // Validate configuration before proceeding
+    try {
+      this.getTransportType(serverConfig);
+    } catch (error: any) {
+      throw new Error(`${ErrorCode.INVALID_CONFIG}: ${error.message}`);
+    }
+
     try {
       // Add to configuration file
       await this.configManager.addServer(name, serverConfig);
-      
+
       // Connect to the server
       await this.connectServer(name, serverConfig);
-      
+
       console.log(`✓ Server '${name}' added successfully`);
-      
+
     } catch (error: any) {
       console.error(`✗ Failed to add server '${name}': ${error.message}`);
       throw new Error(`${ErrorCode.SERVER_ADD_FAILED}: ${error.message}`);

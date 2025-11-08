@@ -5,8 +5,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
  */
 export interface ServerConfig {
   name: string;
-  package: string;
+  // For stdio transport
+  package?: string;
   args?: string[];
+  // For HTTP transport
+  url?: string;
+  // Optional explicit transport type
+  transport?: 'stdio' | 'http';
 }
 
 /**
@@ -49,7 +54,9 @@ export interface GatewayConfig {
  */
 export interface ServerInfo {
   name: string;
-  package: string;
+  transport: string;
+  package?: string;  // Only for stdio
+  url?: string;      // Only for HTTP
   status: 'connected' | 'disconnected' | 'error' | 'reconnecting';
   toolCount: number;
   error?: string;
@@ -83,7 +90,9 @@ export enum ErrorCode {
   // Validation errors
   INVALID_ARGUMENTS = 'INVALID_ARGUMENTS',
   INVALID_CONFIG = 'INVALID_CONFIG',
-  
+  INVALID_URL = 'INVALID_URL',
+  INVALID_TRANSPORT = 'INVALID_TRANSPORT',
+
   // System errors
   GATEWAY_ERROR = 'GATEWAY_ERROR',
   DAEMON_NOT_RUNNING = 'DAEMON_NOT_RUNNING'
