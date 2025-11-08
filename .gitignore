@@ -6,3 +6,4 @@ dist/
 .vscode/
 .claude/
 CLAUDE.md
+*.tgz
