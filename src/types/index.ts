@@ -14,7 +14,7 @@ export interface ServerConfig {
  */
 export interface ServerState {
   config: ServerConfig;
-  status: 'connected' | 'disconnected' | 'error';
+  status: 'connected' | 'disconnected' | 'error' | 'reconnecting';
   client: Client | null;
   tools: Tool[];
   reconnectAttempts: number;
@@ -50,7 +50,7 @@ export interface GatewayConfig {
 export interface ServerInfo {
   name: string;
   package: string;
-  status: 'connected' | 'disconnected' | 'error';
+  status: 'connected' | 'disconnected' | 'error' | 'reconnecting';
   toolCount: number;
   error?: string;
   lastConnected?: string;

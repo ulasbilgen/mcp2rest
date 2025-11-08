@@ -39,6 +39,9 @@ export class APIServer {
     // POST /servers - Add new server
     this.app.post('/servers', this.handleAddServer.bind(this));
 
+    // DELETE /servers/:name - Remove server
+    this.app.delete('/servers/:name', this.handleRemoveServer.bind(this));
+
     // GET /servers/:name/tools - Get tools for a specific server
     this.app.get('/servers/:name/tools', this.handleGetServerTools.bind(this));
 
@@ -168,6 +171,54 @@ export class APIServer {
       let statusCode = 500;
       if (errorCode === ErrorCode.SERVER_ALREADY_EXISTS) {
         statusCode = 409;
+      }
+
+      res.status(statusCode).json({
+        error: {
+          code: errorCode,
+          message: errorMessage.replace(/^[A-Z_]+:\s*/, '')
+        }
+      });
+    }
+  }
+
+  /**
+   * Handle DELETE /servers/:name endpoint
+   */
+  private async handleRemoveServer(req: Request, res: Response): Promise<void> {
+    try {
+      const { name } = req.params;
+
+      // Validate server name
+      if (!name) {
+        res.status(400).json({
+          error: {
+            code: ErrorCode.INVALID_ARGUMENTS,
+            message: 'Server name is required'
+          }
+        });
+        return;
+      }
+
+      // Remove server via gateway
+      await this.gateway.removeServer(name);
+
+      // Return success response
+      res.json({
+        success: true,
+        message: `Server '${name}' removed successfully`
+      });
+
+    } catch (error: any) {
+      // Parse error code from error message
+      const errorMessage = error.message || 'Unknown error';
+      const errorCodeMatch = errorMessage.match(/^([A-Z_]+):/);
+      const errorCode = errorCodeMatch ? errorCodeMatch[1] : ErrorCode.GATEWAY_ERROR;
+
+      // Determine status code based on error type
+      let statusCode = 500;
+      if (errorCode === ErrorCode.SERVER_NOT_FOUND) {
+        statusCode = 404;
       }
 
       res.status(statusCode).json({

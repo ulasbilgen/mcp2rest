@@ -18,11 +18,17 @@ export class Gateway {
   private servers: Map<string, ServerState>;
   private config: GatewayConfig;
   private configManager: ConfigManager;
+  private reconnectTimers: Map<string, NodeJS.Timeout>;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  private readonly MAX_RECONNECT_ATTEMPTS = 10;
+  private readonly MAX_BACKOFF_DELAY = 30000; // 30 seconds
+  private readonly HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 
   constructor(configManager: ConfigManager) {
     this.servers = new Map();
     this.configManager = configManager;
     this.config = configManager.getDefaultConfig();
+    this.reconnectTimers = new Map();
   }
 
   /**
@@ -48,6 +54,9 @@ export class Gateway {
       }
     }
     
+    // Start health monitoring
+    this.startHealthMonitoring();
+    
     console.log('Gateway initialization complete');
   }
 
@@ -57,16 +66,18 @@ export class Gateway {
   private async connectServer(name: string, serverConfig: ServerConfig): Promise<void> {
     console.log(`Connecting to server '${name}' (${serverConfig.package})...`);
     
-    // Initialize server state
-    const serverState: ServerState = {
-      config: serverConfig,
-      status: 'disconnected',
-      client: null,
-      tools: [],
-      reconnectAttempts: 0
-    };
-    
-    this.servers.set(name, serverState);
+    // Get or initialize server state
+    let serverState = this.servers.get(name);
+    if (!serverState) {
+      serverState = {
+        config: serverConfig,
+        status: 'disconnected',
+        client: null,
+        tools: [],
+        reconnectAttempts: 0
+      };
+      this.servers.set(name, serverState);
+    }
     
     try {
       // Spawn MCP server process using npx
@@ -106,6 +117,12 @@ export class Gateway {
       serverState.lastConnected = new Date();
       serverState.reconnectAttempts = 0;
       
+      // Clear any existing reconnect timer
+      this.clearReconnectTimer(name);
+      
+      // Set up disconnect handler for auto-reconnect
+      this.setupDisconnectHandler(name, client);
+      
       console.log(`✓ Connected to server '${name}' with ${tools.length} tool(s)`);
       
     } catch (error: any) {
@@ -113,6 +130,90 @@ export class Gateway {
       serverState.lastError = error.message;
       console.error(`✗ Failed to connect to server '${name}': ${error.message}`);
       throw error;
+    }
+  }
+
+  /**
+   * Set up disconnect handler for a client to enable auto-reconnect
+   */
+  private setupDisconnectHandler(name: string, client: Client): void {
+    // Listen for transport close events
+    client.onclose = () => {
+      const serverState = this.servers.get(name);
+      if (!serverState) return;
+      
+      console.log(`⚠ Server '${name}' disconnected unexpectedly`);
+      serverState.status = 'disconnected';
+      serverState.client = null;
+      
+      // Trigger reconnection
+      this.scheduleReconnect(name);
+    };
+    
+    client.onerror = (error: Error) => {
+      const serverState = this.servers.get(name);
+      if (!serverState) return;
+      
+      console.error(`⚠ Server '${name}' error: ${error.message}`);
+      serverState.lastError = error.message;
+    };
+  }
+
+  /**
+   * Schedule a reconnection attempt with exponential backoff
+   */
+  private scheduleReconnect(name: string): void {
+    const serverState = this.servers.get(name);
+    if (!serverState) return;
+    
+    // Check if we've exceeded max reconnection attempts
+    if (serverState.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      console.error(`✗ Server '${name}' exceeded maximum reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS})`);
+      serverState.status = 'error';
+      serverState.lastError = 'Maximum reconnection attempts exceeded';
+      return;
+    }
+    
+    // Calculate exponential backoff delay: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    const baseDelay = 1000; // 1 second
+    const exponentialDelay = baseDelay * Math.pow(2, serverState.reconnectAttempts);
+    const delay = Math.min(exponentialDelay, this.MAX_BACKOFF_DELAY);
+    
+    serverState.reconnectAttempts++;
+    serverState.status = 'reconnecting';
+    
+    console.log(`⟳ Scheduling reconnection for server '${name}' (attempt ${serverState.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS}) in ${delay}ms`);
+    
+    // Clear any existing timer
+    this.clearReconnectTimer(name);
+    
+    // Schedule reconnection
+    const timer = setTimeout(async () => {
+      console.log(`⟳ Attempting to reconnect to server '${name}' (attempt ${serverState.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+      
+      try {
+        await this.connectServer(name, serverState.config);
+        console.log(`✓ Successfully reconnected to server '${name}'`);
+      } catch (error: any) {
+        console.error(`✗ Reconnection attempt failed for server '${name}': ${error.message}`);
+        serverState.lastError = error.message;
+        
+        // Schedule next reconnection attempt
+        this.scheduleReconnect(name);
+      }
+    }, delay);
+    
+    this.reconnectTimers.set(name, timer);
+  }
+
+  /**
+   * Clear reconnection timer for a server
+   */
+  private clearReconnectTimer(name: string): void {
+    const timer = this.reconnectTimers.get(name);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(name);
     }
   }
 
@@ -239,6 +340,9 @@ export class Gateway {
     }
     
     try {
+      // Clear any reconnection timers
+      this.clearReconnectTimer(name);
+      
       // Disconnect client if connected
       if (serverState.client) {
         await serverState.client.close();
@@ -259,10 +363,72 @@ export class Gateway {
   }
 
   /**
+   * Start periodic health monitoring for all servers
+   */
+  private startHealthMonitoring(): void {
+    console.log(`Starting health monitoring (interval: ${this.HEALTH_CHECK_INTERVAL}ms)`);
+    
+    this.healthCheckInterval = setInterval(() => {
+      this.performHealthChecks();
+    }, this.HEALTH_CHECK_INTERVAL);
+  }
+
+  /**
+   * Stop health monitoring
+   */
+  private stopHealthMonitoring(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+      console.log('Health monitoring stopped');
+    }
+  }
+
+  /**
+   * Perform health checks on all connected servers
+   */
+  private async performHealthChecks(): Promise<void> {
+    for (const [name, state] of this.servers.entries()) {
+      // Only check servers that are supposed to be connected
+      if (state.status === 'connected' && state.client) {
+        try {
+          // Attempt to list tools as a health check
+          // This is a lightweight operation that verifies the connection is alive
+          await Promise.race([
+            state.client.listTools(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Health check timeout')), 5000)
+            )
+          ]);
+          
+          // Connection is healthy
+        } catch (error: any) {
+          console.warn(`⚠ Health check failed for server '${name}': ${error.message}`);
+          
+          // Mark as disconnected and trigger reconnection
+          state.status = 'disconnected';
+          state.client = null;
+          state.lastError = `Health check failed: ${error.message}`;
+          
+          this.scheduleReconnect(name);
+        }
+      }
+    }
+  }
+
+  /**
    * Shutdown the gateway and disconnect all servers
    */
   async shutdown(): Promise<void> {
     console.log('Shutting down MCP Gateway...');
+    
+    // Stop health monitoring
+    this.stopHealthMonitoring();
+    
+    // Clear all reconnection timers
+    for (const name of this.reconnectTimers.keys()) {
+      this.clearReconnectTimer(name);
+    }
     
     for (const [name, state] of this.servers.entries()) {
       if (state.client) {

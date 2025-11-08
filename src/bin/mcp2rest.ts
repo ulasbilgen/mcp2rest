@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs/promises';
+import { readFileSync } from 'fs';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { Gateway } from '../gateway/Gateway.js';
 import { APIServer } from '../api/APIServer.js';
@@ -12,12 +13,17 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// Read version from package.json (relative to dist/bin/)
+const packageJson = JSON.parse(
+  readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')
+);
+
 const program = new Command();
 
 program
   .name('mcp2rest')
   .description('A standalone Node.js daemon that manages multiple MCP servers and exposes their tools via REST API')
-  .version('0.1.0');
+  .version(packageJson.version);
 
 // Start command - starts the gateway daemon
 program
@@ -430,6 +436,44 @@ program
         console.error('✗ Gateway is not running. Start it with: mcp2rest start');
       } else {
         console.error('✗ Failed to add server:', error.message);
+      }
+      process.exit(1);
+    }
+  });
+
+// Remove command - removes an MCP server
+program
+  .command('remove <name>')
+  .description('Remove an MCP server from the gateway')
+  .action(async (name: string) => {
+    try {
+      console.log(`Removing server '${name}'...`);
+      
+      // Get configuration to determine API port
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+      const port = config.gateway.port;
+      const host = config.gateway.host;
+      
+      // Send DELETE request to /servers/:name endpoint
+      const response = await fetch(`http://${host}:${port}/servers/${name}`, {
+        method: 'DELETE'
+      });
+      
+      const data = await response.json() as any;
+      
+      if (response.ok) {
+        console.log(`✓ ${data.message}`);
+      } else {
+        console.error(`✗ Failed to remove server: ${data.error.message}`);
+        process.exit(1);
+      }
+      
+    } catch (error: any) {
+      if (error.code === 'ECONNREFUSED') {
+        console.error('✗ Gateway is not running. Start it with: mcp2rest start');
+      } else {
+        console.error('✗ Failed to remove server:', error.message);
       }
       process.exit(1);
     }
