@@ -326,7 +326,10 @@ Common error codes:
 
 ### Future Enhancements
 
-- Authentication/Authorization
+- **API Key & Authentication Support** - See [API_KEY_SUPPORT.md](./API_KEY_SUPPORT.md) for detailed implementation plan
+  - HTTP headers for HTTP-based MCP servers
+  - Environment variables for stdio-based MCP servers
+  - Support for services like Context7, PostHog, Figma Cloud, etc.
 - Rate limiting
 - WebSocket support for streaming
 - Web-based dashboard
@@ -340,4 +343,7 @@ MIT
 
 Contributions are welcome! Please open an issue or submit a pull request.
 
-See [MCP_Gateway_PRD.md](./MCP_Gateway_PRD.md) for detailed implementation specifications.
+## Documentation
+
+- [MCP_Gateway_PRD.md](./MCP_Gateway_PRD.md) - Detailed implementation specifications
+- [API_KEY_SUPPORT.md](./API_KEY_SUPPORT.md) - API key and authentication implementation plan
