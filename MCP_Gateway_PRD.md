@@ -8,9 +8,11 @@
 
 ## Executive Summary
 
-**mcp2rest** is a standalone Node.js daemon that manages multiple MCP servers and exposes their tools via REST API. It solves the problem of MCP servers being Node.js-only by providing a universal HTTP interface accessible from any programming language.
+**mcp2rest** is a standalone Node.js daemon that manages multiple MCP servers and exposes their tools via REST API. It solves the problem of MCP servers being Node.js-only by providing a universal HTTP interface accessible from any programming language. The gateway runs as a production-ready service using PM2 for process management, auto-restart, and centralized logging.
 
 **Target Users:** Developers using Python, Go, Rust, or any language that can make HTTP requests who want to leverage MCP tools (browser automation, file systems, etc.) without Node.js integration complexity.
+
+**Key Features:** REST API for all operations, PM2 service management, dynamic server configuration, and production-grade reliability.
 
 ---
 
@@ -43,38 +45,47 @@
 
 ### ✅ In Scope
 
-1. **Dynamic Server Management**
-   - CLI commands: `add`, `remove`, `list`, `tools`
-   - Hot-reload: servers added/removed without gateway restart
-   - npx-based package installation
-
-2. **REST API**
+1. **REST API (Primary Interface)**
    - `POST /call` - Execute tool on any server
    - `GET /servers` - List all servers with status
    - `GET /servers/:name/tools` - List tools for specific server
    - `POST /servers` - Add server dynamically
-   - `DELETE /servers/:name` - Remove server
    - `GET /health` - Health check endpoint
 
+2. **PM2 Service Management**
+   - `service install` - Install as system service
+   - `service uninstall` - Remove service
+   - `service status` - Check service status
+   - `service logs` - View logs with follow mode
+   - Auto-restart on failure
+   - Centralized log management at `~/.mcp2rest/logs/`
+
 3. **Gateway Daemon**
-   - Process management: `start`, `stop`, `status`
+   - Foreground mode: `start`, `stop` commands
+   - Service mode: PM2-managed process
    - Persistent connections to all MCP servers
-   - Auto-reconnect on server failure
-   - PID file at `~/.mcp2rest/gateway.pid`
+   - PID file at `~/.mcp2rest/gateway.pid` (foreground mode)
+   - npx-based MCP server installation
 
 4. **Configuration**
    - YAML config at `~/.mcp2rest/config.yaml`
-   - Dynamic updates via CLI
+   - Auto-created with defaults on first start
+   - Edit config + service restart for updates
    - Example configurations included
 
 5. **Production Readiness**
-   - Structured logging (console for dev)
+   - Console logging with timestamps
    - Error handling with standardized codes
-   - Graceful shutdown
+   - Graceful shutdown (SIGTERM/SIGINT)
    - npm package with global installation
+   - PM2 ecosystem configuration
 
 ### ❌ Out of Scope (Post-MVP)
 
+- Auto-reconnect with exponential backoff (high-priority TODO)
+- `DELETE /servers/:name` REST endpoint (backend method exists)
+- Extensive CLI commands (`list`, `tools`, `remove`, `config`, `init`, `status`)
+  - Rationale: REST API + PM2 provide these capabilities
 - Authentication/Authorization
 - Rate limiting
 - WebSocket support for streaming
@@ -108,11 +119,11 @@ gateway:
   logLevel: info  # debug | info | warn | error
 ```
 
-**Hot-Reload Strategy:**
-- CLI commands modify config.yaml
-- Send signal to running gateway process
-- Gateway reloads config and updates server connections
-- No downtime for unaffected servers
+**Configuration Update Strategy:**
+- Edit `~/.mcp2rest/config.yaml` manually
+- Restart service: `pm2 restart mcp2rest` (or `mcp2rest stop && mcp2rest start` for foreground)
+- Gateway reconnects to all configured servers
+- Brief downtime during restart (~1-2 seconds)
 
 ### 2. Server Connection Model
 
@@ -154,29 +165,46 @@ class Gateway {
 
 **Connection Lifecycle:**
 1. Server added → npx installs package → spawn process → establish MCP connection
-2. Connection lost → auto-reconnect with exponential backoff (1s, 2s, 4s)
-3. Max 3 reconnect attempts, then mark as 'error' status
-4. Manual retry available via CLI
+2. Connection established → mark as 'connected' status
+3. Connection lost → mark as 'error' status with error message
+4. **TODO:** Auto-reconnect with exponential backoff (not yet implemented)
+5. Recovery: Restart gateway to reconnect all servers
 
 ### 3. Process Management
 
-**Daemon Pattern:**
+**Two Operation Modes:**
+
+**Foreground Mode** (Development):
 ```bash
-# Start gateway (forks to background)
+# Start gateway in foreground
 mcp2rest start
 
-# Stop gateway (kills via PID)
+# Stop gateway (sends SIGTERM to PID)
 mcp2rest stop
-
-# Check status
-mcp2rest status  # → "running" or "stopped"
 ```
-
-**Implementation:**
 - PID file at `~/.mcp2rest/gateway.pid`
-- Process detachment using Node.js `child_process`
 - Graceful shutdown on SIGTERM/SIGINT
-- Stdout/stderr redirect to `~/.mcp2rest/logs/gateway.log`
+- Console output to stdout/stderr
+
+**Service Mode** (Production - PM2):
+```bash
+# Install as system service
+mcp2rest service install
+
+# Check service status
+mcp2rest service status
+
+# View logs
+mcp2rest service logs --follow
+
+# Uninstall service
+mcp2rest service uninstall
+```
+- Managed by PM2 process manager
+- Auto-restart on failure (500M memory limit)
+- Centralized logs at `~/.mcp2rest/logs/`
+- Survives system reboots (with PM2 startup)
+- Configuration: `ecosystem.config.js`
 
 ### 4. REST API Design
 
@@ -188,34 +216,33 @@ Health check with server count.
 **Response:**
 ```json
 {
-  "status": "healthy",
-  "servers": 2,
-  "serverNames": ["chrome", "filesystem"]
+  "status": "ok",
+  "serverCount": 2,
+  "connectedServers": 1
 }
 ```
 
 #### `GET /servers`
 List all servers with status.
 
-**Response:**
+**Response:** (Array of servers, not wrapped in object)
 ```json
-{
-  "servers": [
-    {
-      "name": "chrome",
-      "package": "chrome-devtools-mcp@latest",
-      "status": "connected",
-      "toolCount": 26
-    },
-    {
-      "name": "filesystem",
-      "package": "@modelcontextprotocol/server-filesystem",
-      "status": "error",
-      "toolCount": 0,
-      "error": "Connection refused"
-    }
-  ]
-}
+[
+  {
+    "name": "chrome",
+    "package": "chrome-devtools-mcp@latest",
+    "status": "connected",
+    "toolCount": 26,
+    "lastConnected": "2025-01-08T10:30:00.000Z"
+  },
+  {
+    "name": "filesystem",
+    "package": "@modelcontextprotocol/server-filesystem",
+    "status": "error",
+    "toolCount": 0,
+    "error": "Connection refused"
+  }
+]
 ```
 
 #### `POST /servers`
@@ -239,9 +266,11 @@ Add a new server dynamically.
 ```
 
 #### `DELETE /servers/:name`
+**⚠️ NOT YET IMPLEMENTED** (Backend method `Gateway.removeServer()` exists)
+
 Remove a server.
 
-**Response:**
+**Planned Response:**
 ```json
 {
   "success": true,
@@ -376,128 +405,125 @@ enum ErrorCode {
 
 ## CLI Commands Reference
 
-### `mcp2rest init`
-Initialize configuration directory and default config.
+**Philosophy:** The gateway is API-first. Use REST endpoints for server operations. CLI provides daemon/service management and one convenience command.
 
-```bash
-mcp2rest init
-```
+### Gateway Control (Foreground Mode)
 
-Creates `~/.mcp2rest/config.yaml` with defaults.
-
-### `mcp2rest start`
-Start the gateway daemon.
+#### `mcp2rest start`
+Start the gateway in foreground mode (development).
 
 ```bash
 mcp2rest start [-c <config-path>]
 ```
 
 **Behavior:**
-- Forks to background
+- Runs in foreground (attached to terminal)
 - Writes PID to `~/.mcp2rest/gateway.pid`
+- Auto-creates config if missing
 - Connects to all servers in config
-- Exits if already running
+- Exits if PM2 service already running
 
-### `mcp2rest stop`
-Stop the running gateway daemon.
+#### `mcp2rest stop`
+Stop the foreground gateway or PM2 service.
 
 ```bash
 mcp2rest stop
 ```
 
 **Behavior:**
-- Reads PID from file
-- Sends SIGTERM (graceful shutdown)
-- Waits up to 10s, then SIGKILL
+- Detects if running as PM2 service or foreground
+- Sends SIGTERM to foreground process (reads PID)
+- Stops PM2 service if detected
 - Removes PID file
 
-### `mcp2rest status`
-Check if gateway is running.
+### PM2 Service Management
+
+#### `mcp2rest service install`
+Install gateway as a system service with PM2.
 
 ```bash
-mcp2rest status
+mcp2rest service install
+```
+
+**Behavior:**
+- Starts gateway via PM2 using `ecosystem.config.js`
+- Configures auto-restart on failure
+- Sets up centralized logs at `~/.mcp2rest/logs/`
+- Optionally configures boot startup
+
+#### `mcp2rest service uninstall`
+Remove the PM2 service.
+
+```bash
+mcp2rest service uninstall
+```
+
+#### `mcp2rest service status`
+Check service status and resource usage.
+
+```bash
+mcp2rest service status
 ```
 
 **Output:**
 ```
-Gateway is running (PID: 12345)
-Servers: 2 connected, 0 disconnected
+MCP Gateway Service Status:
+═══════════════════════════════════════
+Status:   🟢 online
+Uptime:   2h 15m
+Memory:   245 MB
+CPU:      2%
+Restarts: 0
+═══════════════════════════════════════
 ```
 
-### `mcp2rest add <name> <package> [--args ...]`
-Add a new MCP server (gateway must be running).
+#### `mcp2rest service logs`
+View service logs.
+
+```bash
+# View last 100 lines
+mcp2rest service logs
+
+# Follow logs in real-time
+mcp2rest service logs --follow
+
+# Show last 50 lines
+mcp2rest service logs --lines 50
+```
+
+### Server Management (Convenience)
+
+#### `mcp2rest add <name> <package> [--args ...]`
+Add a new MCP server via HTTP API (requires gateway running).
 
 ```bash
 # Basic
 mcp2rest add chrome chrome-devtools-mcp@latest
 
 # With arguments
-mcp2rest add chrome chrome-devtools-mcp@latest --args --headless=true --isolated=true
-
-# Scoped package
-mcp2rest add github @modelcontextprotocol/server-github
-
-# With path argument
 mcp2rest add fs @modelcontextprotocol/server-filesystem --args /home/user/workspace
 ```
 
 **Behavior:**
-1. Validates gateway is running
-2. Checks server name not already in use
-3. Updates config.yaml
-4. Installs package via npx (shows progress)
-5. Connects server in running gateway
-6. Returns success/error
+- Sends `POST /servers` to running gateway
+- Gateway installs package via npx
+- Updates config.yaml
+- Connects to server
 
-### `mcp2rest remove <name>`
-Remove a server (gateway must be running).
+**Alternative:** Edit `~/.mcp2rest/config.yaml` + restart service
 
-```bash
-mcp2rest remove chrome
-```
+### NOT IMPLEMENTED (Use REST API Instead)
 
-**Behavior:**
-1. Disconnects server gracefully
-2. Updates config.yaml
-3. Removes from running gateway
+The following commands are NOT implemented. Use REST API endpoints or direct config editing:
 
-### `mcp2rest list`
-List all servers and their status.
+- ❌ `mcp2rest remove` → Use `DELETE /servers/:name` (TODO) or edit YAML
+- ❌ `mcp2rest list` → Use `GET /servers` endpoint
+- ❌ `mcp2rest tools` → Use `GET /servers/:name/tools` endpoint
+- ❌ `mcp2rest config` → Use `cat ~/.mcp2rest/config.yaml`
+- ❌ `mcp2rest init` → Config auto-created on first start
+- ❌ `mcp2rest status` → Use `mcp2rest service status` for PM2
 
-```bash
-mcp2rest list
-```
-
-**Output:**
-```
-Servers:
-  ✓ chrome      (chrome-devtools-mcp@latest)    26 tools
-  ✗ filesystem  (@modelcontextprotocol/server-filesystem)  Error: Connection refused
-```
-
-### `mcp2rest tools <name>`
-List all tools for a specific server.
-
-```bash
-mcp2rest tools chrome
-```
-
-**Output:**
-```
-Tools for 'chrome' (26 total):
-  - navigate              Navigate to a URL
-  - screenshot            Take a screenshot
-  - click                 Click an element
-  - type                  Type text into an element
-  ...
-```
-
-### `mcp2rest config`
-Show config file location and contents.
-
-```bash
-mcp2rest config
-```
+**Rationale:** With PM2 + REST API, extensive CLI commands are redundant.
 
 ---
 
@@ -507,23 +533,28 @@ mcp2rest config
 mcp2rest/
 ├── package.json
 ├── tsconfig.json
+├── ecosystem.config.js        # PM2 configuration
 ├── README.md
-├── LICENSE
 ├── .gitignore
-├── .npmignore
-├── bin/
-│   └── mcp2rest.js          # Entry point for npm global (shebang)
 ├── src/
-│   ├── gateway.ts              # Core Gateway class
-│   ├── server.ts               # Express REST API
-│   ├── cli.ts                  # Commander.js CLI implementation
-│   ├── daemon.ts               # Process management (fork/kill/status)
-│   ├── config.ts               # YAML config read/write
-│   ├── logger.ts               # Logging utility
-│   └── types.ts                # TypeScript interfaces
-├── config/
-│   └── example.yaml            # Example configuration
-└── dist/                       # Compiled TypeScript output (gitignored)
+│   ├── bin/
+│   │   └── mcp2rest.ts        # CLI entry point (Commander.js)
+│   ├── gateway/
+│   │   └── Gateway.ts         # Core Gateway class
+│   ├── api/
+│   │   └── APIServer.ts       # Express REST API server
+│   ├── config/
+│   │   └── ConfigManager.ts   # YAML config management
+│   └── types/
+│       └── index.ts           # TypeScript interfaces
+├── config.example.yaml        # Example configuration
+└── dist/                      # Compiled TypeScript output (npm published)
+    ├── bin/
+    │   └── mcp2rest.js        # Compiled CLI (with shebang)
+    ├── gateway/
+    ├── api/
+    ├── config/
+    └── types/
 ```
 
 ---
@@ -534,20 +565,23 @@ mcp2rest/
 ```json
 {
   "express": "^4.18.2",
-  "commander": "^11.0.0",
+  "commander": "^11.1.0",
   "js-yaml": "^4.1.0",
   "@modelcontextprotocol/sdk": "^0.5.0",
-  "winston": "^3.11.0"
+  "pm2": "^5.3.0"
 }
 ```
+
+**Note:** Winston is NOT used. Logging uses console output with timestamps.
 
 ### Development Dependencies
 ```json
 {
-  "typescript": "^5.3.0",
-  "@types/node": "^20.0.0",
+  "typescript": "^5.3.3",
+  "@types/node": "^20.10.0",
   "@types/express": "^4.17.21",
-  "tsx": "^4.7.0"
+  "@types/js-yaml": "^4.0.9",
+  "ts-node": "^10.9.2"
 }
 ```
 
@@ -577,44 +611,64 @@ mcp2rest/
 
 **Milestone:** Can add servers and call tools via curl.
 
-### Phase 3: CLI (Days 6-8)
-**Goal:** Full CLI experience
+### Phase 3: CLI & PM2 (Days 6-8)
+**Goal:** Service management and basic CLI
 
 - [x] Commander.js integration
-- [x] Daemon process management (start/stop/status)
-- [x] Dynamic add/remove commands
-- [x] List and tools commands
-- [x] Hot-reload mechanism (send signal to daemon)
+- [x] Daemon process management (start/stop)
+- [x] PM2 service commands (install/uninstall/status/logs)
+- [x] Dynamic add command (convenience)
+- [ ] ~~Remove/list/tools commands~~ (not needed with API)
+- [ ] ~~Hot-reload mechanism~~ (PM2 restart instead)
 
-**Milestone:** End-to-end CLI workflow works.
+**Milestone:** PM2 service management works, basic CLI complete.
 
 ### Phase 4: Polish & Ship (Days 9-10)
 **Goal:** Production-ready npm package
 
-- [x] Comprehensive logging
-- [x] Auto-reconnect with exponential backoff
+- [x] Console logging with timestamps
+- [ ] **Auto-reconnect with exponential backoff** (HIGH PRIORITY TODO)
 - [x] README with examples
 - [x] npm packaging and global install testing
-- [x] Edge case handling (concurrent adds, config corruption, etc.)
+- [x] PM2 production deployment
+- [x] Edge case handling
 
-**Milestone:** Published to npm, ready for users.
+**Milestone:** Ready for production use (except auto-reconnect).
 
 ---
 
 ## Technical Decisions (Finalized)
 
-### ✅ Hot-Reload Requirement
-**Decision:** `mcp2rest add/remove` requires gateway to be running.
+### ✅ PM2 Service Management
+**Decision:** Use PM2 for production deployment instead of custom daemon management.
 
 **Rationale:**
-- Better developer experience (immediate feedback)
-- Config and runtime state stay in sync
-- No restart needed for server changes
+- Battle-tested process manager with auto-restart
+- Built-in log management and rotation
+- Resource monitoring (CPU, memory)
+- Boot startup configuration
+- Reduces custom daemon code complexity
 
 **Implementation:**
-- CLI commands send HTTP requests to running gateway
-- Gateway updates config.yaml after successful operation
-- If gateway not running, CLI shows error: "Gateway not running. Start with 'mcp2rest start'"
+- `mcp2rest service install` uses PM2 via `ecosystem.config.js`
+- Auto-restart on failure with 500M memory limit
+- Centralized logs at `~/.mcp2rest/logs/`
+- Coexists with foreground mode for development
+
+### ✅ Configuration Update Strategy
+**Decision:** Edit config.yaml + service restart (no hot-reload).
+
+**Rationale:**
+- Simpler implementation (no IPC/signals)
+- PM2 restart is fast (~1-2 seconds)
+- Config file remains single source of truth
+- No risk of config/runtime state divergence
+
+**Implementation:**
+- Users edit `~/.mcp2rest/config.yaml` manually
+- Run `pm2 restart mcp2rest` or `mcp2rest stop && mcp2rest start`
+- Gateway reconnects to all servers on startup
+- `mcp2rest add` command is convenience wrapper around `POST /servers` API
 
 ### ✅ Tool Execution Timeout
 **Decision:** 30s global timeout (configurable in config.yaml).
@@ -653,13 +707,20 @@ const result = await Promise.race([
 
 **Trade-off:** Must handle concurrent writes (use file locking or queue writes).
 
-### ✅ Logging Destination
-**Decision:** Console output for dev laptop (stdout/stderr).
+### ✅ Logging Strategy
+**Decision:** Console output with timestamps (no Winston).
 
 **Rationale:**
-- Simple for debugging
-- Easy to pipe to file if needed: `mcp2rest start > ~/gateway.log 2>&1`
-- Production users can redirect as needed
+- Simple and sufficient for MVP
+- PM2 captures and manages all console output
+- PM2 provides log rotation and viewing (`mcp2rest service logs`)
+- Avoids dependency overhead
+- Production-ready via PM2 log management
+
+**Implementation:**
+- Use `console.log/error()` with prefixes
+- PM2 adds timestamps automatically
+- Logs stored at `~/.mcp2rest/logs/` (out.log, error.log, combined.log)
 
 ---
 
@@ -764,18 +825,21 @@ curl http://localhost:3000/call \
 
 ### Example 3: Multi-Server Setup
 ```bash
+# Install service
+mcp2rest service install
+
 # Add multiple servers
 mcp2rest add chrome chrome-devtools-mcp@latest
 mcp2rest add github @modelcontextprotocol/server-github
 mcp2rest add fs @modelcontextprotocol/server-filesystem --args ~/projects
 
-# List all
-mcp2rest list
+# List all servers via API
+curl http://localhost:3000/servers
 
-# Check tools for each
-mcp2rest tools chrome
-mcp2rest tools github
-mcp2rest tools fs
+# Check tools for each via API
+curl http://localhost:3000/servers/chrome/tools
+curl http://localhost:3000/servers/github/tools
+curl http://localhost:3000/servers/fs/tools
 ```
 
 ---
@@ -794,8 +858,8 @@ A: For dev laptop, no auth needed. Production users should put gateway behind re
 **Q: What if two clients call the same tool simultaneously?**  
 A: MCP protocol supports concurrent calls. Gateway doesn't queue. If issues arise, we'll add per-server queuing.
 
-**Q: Can I edit config.yaml manually?**  
-A: Yes, but you must restart gateway (`mcp2rest stop && mcp2rest start`) for changes to take effect. Use CLI for hot-reload.
+**Q: Can I edit config.yaml manually?**
+A: Yes! This is the recommended way for production. Edit `~/.mcp2rest/config.yaml` then restart: `pm2 restart mcp2rest` (or `mcp2rest stop && mcp2rest start` for foreground mode). Restart takes 1-2 seconds.
 
 ---
 
@@ -809,6 +873,131 @@ A: Yes, but you must restart gateway (`mcp2rest stop && mcp2rest start`) for cha
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** October 23, 2025  
-**Next Review:** Post-MVP launch (Week 3)
+---
+
+## 📋 TODO: Outstanding Features
+
+### 🔴 High Priority
+
+#### 1. Auto-Reconnect with Exponential Backoff
+**Status:** Not implemented
+**Impact:** High - Critical for production reliability
+**Location:** `src/gateway/Gateway.ts`
+
+**Requirements:**
+- Implement auto-reconnect when MCP server connection lost
+- Exponential backoff: 1s, 2s, 4s delays
+- Max 3 reconnect attempts before marking as 'error'
+- Log reconnection attempts and outcomes
+- Update ServerState.reconnectAttempts counter
+
+**Implementation Notes:**
+```typescript
+// Add to Gateway.ts
+private async reconnectServer(name: string): Promise<void> {
+  const state = this.servers.get(name);
+  if (!state || state.reconnectAttempts >= 3) return;
+
+  const delay = Math.pow(2, state.reconnectAttempts) * 1000;
+  await new Promise(resolve => setTimeout(resolve, delay));
+
+  state.reconnectAttempts++;
+  try {
+    await this.connectServer(name, state.config);
+  } catch (error) {
+    if (state.reconnectAttempts < 3) {
+      await this.reconnectServer(name);
+    }
+  }
+}
+```
+
+#### 2. DELETE /servers/:name Endpoint
+**Status:** Backend exists, endpoint missing
+**Impact:** Medium - Completes REST API
+**Location:** `src/api/APIServer.ts`
+
+**Requirements:**
+- Add route: `app.delete('/servers/:name', this.handleDeleteServer.bind(this))`
+- Call `Gateway.removeServer(name)`
+- Return success/error response
+- Handle 404 if server not found
+
+**Implementation:**
+```typescript
+// Add to APIServer.ts setupRoutes()
+this.app.delete('/servers/:name', this.handleDeleteServer.bind(this));
+
+// Add handler method
+private async handleDeleteServer(req: Request, res: Response): Promise<void> {
+  try {
+    const { name } = req.params;
+    await this.gateway.removeServer(name);
+    res.json({
+      success: true,
+      message: `Server '${name}' removed successfully`
+    });
+  } catch (error: any) {
+    // ... error handling
+  }
+}
+```
+
+### 🟡 Medium Priority
+
+#### 3. Fix Response Format Inconsistencies
+**Status:** Works but differs from original PRD
+**Impact:** Low - Documentation mismatch
+**Files:** `src/api/APIServer.ts`, Update PRD or code
+
+**Options:**
+- A) Update PRD to match implementation (DONE ✅)
+- B) Update code to match original PRD format
+
+**Decision:** Keeping current implementation, PRD updated.
+
+#### 4. Optional CLI Commands
+**Status:** Not implemented (by design)
+**Impact:** Low - REST API provides functionality
+**Files:** `src/bin/mcp2rest.ts`
+
+**Possible additions** (only if user requests):
+- `mcp2rest list` → Wrapper around `GET /servers`
+- `mcp2rest tools <name>` → Wrapper around `GET /servers/:name/tools`
+- `mcp2rest remove <name>` → Wrapper around `DELETE /servers/:name`
+
+**Note:** These are convenience wrappers. Not recommended - encourages API-first usage.
+
+### 🟢 Low Priority / Future Enhancements
+
+#### 5. Winston Logging (Optional)
+**Status:** Console logging works fine with PM2
+**Impact:** Very Low
+
+**Current:** Console output + PM2 log management
+**Alternative:** Add Winston for structured logging
+
+**Decision:** Console logging + PM2 is sufficient for MVP. Winston can be added post-launch if needed.
+
+#### 6. Concurrent Request Handling
+**Status:** Basic implementation sufficient
+**Impact:** Low until high load
+
+**Monitor:** Tool execution concurrency under load
+**Future:** Add per-server request queuing if needed
+
+#### 7. Response Format Standardization
+**Status:** Inconsistent object vs array wrapping
+**Impact:** Very Low
+
+**Examples:**
+- `/servers` returns array (not wrapped)
+- `/call` returns wrapped object
+
+**Decision:** Keep current implementation for MVP. Consider standardization in v2.0.
+
+---
+
+**Document Version:** 2.0 (Updated post-implementation)
+**Last Updated:** January 8, 2025
+**Next Review:** After auto-reconnect implementation

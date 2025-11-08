@@ -306,6 +306,31 @@ Common error codes:
 - Node.js >= 18.0.0
 - npm or npx
 
+## TODO
+
+### High Priority
+
+- [ ] **Auto-Reconnect**: Implement auto-reconnect with exponential backoff when MCP servers disconnect
+  - Location: `src/gateway/Gateway.ts`
+  - Strategy: 1s, 2s, 4s delays, max 3 attempts
+
+- [ ] **DELETE Endpoint**: Add `DELETE /servers/:name` REST endpoint
+  - Location: `src/api/APIServer.ts`
+  - Backend method `Gateway.removeServer()` already exists
+
+### Medium Priority
+
+- [ ] Optional CLI convenience commands (list, tools, remove)
+  - Note: REST API already provides this functionality
+
+### Future Enhancements
+
+- Authentication/Authorization
+- Rate limiting
+- WebSocket support for streaming
+- Web-based dashboard
+- Tool result caching
+
 ## License
 
 MIT
@@ -313,3 +338,5 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
+
+See [MCP_Gateway_PRD.md](./MCP_Gateway_PRD.md) for detailed implementation specifications.
