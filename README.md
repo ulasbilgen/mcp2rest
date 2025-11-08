@@ -164,9 +164,25 @@ Check gateway health.
 ```json
 {
   "status": "ok",
-  "serverCount": 2
+  "serverCount": 2,
+  "connectedServers": 2
 }
 ```
+
+### OpenAPI Specification
+
+Get the complete API specification in OpenAPI/Swagger format.
+
+**Endpoint:** `GET /openapi.yaml`
+
+**Response:** YAML file with complete API specification
+
+**Example:**
+```bash
+curl http://localhost:3000/openapi.yaml > mcp2rest-api.yaml
+```
+
+This specification can be used with Swagger UI, Postman, or other OpenAPI tools to explore and test the API.
 
 ## CLI Commands
 
@@ -345,5 +361,6 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Documentation
 
+- [openapi.yaml](./openapi.yaml) - Complete OpenAPI/Swagger specification for REST API
 - [MCP_Gateway_PRD.md](./MCP_Gateway_PRD.md) - Detailed implementation specifications
 - [API_KEY_SUPPORT.md](./API_KEY_SUPPORT.md) - API key and authentication implementation plan

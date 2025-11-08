@@ -1,6 +1,6 @@
 {
   "name": "mcp2rest",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "A standalone Node.js daemon that manages multiple MCP servers and exposes their tools via REST API",
   "main": "dist/index.js",
   "bin": {
@@ -40,7 +40,8 @@
   "files": [
     "dist",
     "ecosystem.config.js",
-    "config.example.yaml"
+    "config.example.yaml",
+    "openapi.yaml"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.21.0",

@@ -1,6 +1,8 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import { Gateway } from '../gateway/Gateway.js';
 import { ErrorCode } from '../types/index.js';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 /**
  * REST API Server for MCP Gateway
@@ -44,6 +46,9 @@ export class APIServer {
 
     // GET /servers/:name/tools - Get tools for a specific server
     this.app.get('/servers/:name/tools', this.handleGetServerTools.bind(this));
+
+    // GET /openapi.yaml - Serve OpenAPI specification
+    this.app.get('/openapi.yaml', this.handleGetOpenAPISpec.bind(this));
 
     // GET /health - Health check
     this.app.get('/health', this.handleHealthCheck.bind(this));
@@ -306,6 +311,30 @@ export class APIServer {
         error: {
           code: ErrorCode.GATEWAY_ERROR,
           message: error.message || 'Health check failed'
+        }
+      });
+    }
+  }
+
+  /**
+   * Serve OpenAPI specification
+   */
+  private async handleGetOpenAPISpec(req: Request, res: Response): Promise<void> {
+    try {
+      // Read the openapi.yaml file from the package root
+      // __dirname points to dist/api, so go up two levels to package root
+      const openapiPath = path.join(__dirname, '../../openapi.yaml');
+      const openapiContent = await fs.readFile(openapiPath, 'utf-8');
+
+      // Set appropriate Content-Type for YAML
+      res.setHeader('Content-Type', 'application/x-yaml');
+      res.send(openapiContent);
+    } catch (error: any) {
+      console.error('Failed to read OpenAPI specification:', error);
+      res.status(500).json({
+        error: {
+          code: ErrorCode.GATEWAY_ERROR,
+          message: 'Failed to read OpenAPI specification'
         }
       });
     }
