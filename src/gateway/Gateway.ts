@@ -334,28 +334,29 @@ export class Gateway {
    */
   async removeServer(name: string): Promise<void> {
     const serverState = this.servers.get(name);
-    
+
     if (!serverState) {
       throw new Error(`${ErrorCode.SERVER_NOT_FOUND}: Server '${name}' not found`);
     }
-    
+
     try {
+      // Remove from servers map FIRST to prevent reconnection when client closes
+      // (disconnect handler checks if server exists before scheduling reconnect)
+      this.servers.delete(name);
+
       // Clear any reconnection timers
       this.clearReconnectTimer(name);
-      
+
       // Disconnect client if connected
       if (serverState.client) {
         await serverState.client.close();
       }
-      
-      // Remove from servers map
-      this.servers.delete(name);
-      
+
       // Remove from configuration
       await this.configManager.removeServer(name);
-      
+
       console.log(`✓ Server '${name}' removed successfully`);
-      
+
     } catch (error: any) {
       console.error(`✗ Failed to remove server '${name}': ${error.message}`);
       throw error;
