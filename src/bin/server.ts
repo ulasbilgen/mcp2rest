@@ -14,8 +14,14 @@ import { APIServer } from '../api/APIServer';
 /**
  * Start the mcp2rest server
  * @param configPath Optional path to custom config file
+ * @param cliPort Optional port from CLI (highest priority)
+ * @param cliHost Optional host from CLI (highest priority)
  */
-export async function startServer(configPath?: string): Promise<{ gateway: Gateway; apiServer: APIServer }> {
+export async function startServer(
+  configPath?: string,
+  cliPort?: number,
+  cliHost?: string
+): Promise<{ gateway: Gateway; apiServer: APIServer }> {
   console.log('Starting MCP Gateway...');
 
   // Create ConfigManager with optional custom config path
@@ -27,16 +33,24 @@ export async function startServer(configPath?: string): Promise<{ gateway: Gatew
   // Initialize gateway and connect to all configured servers
   await gateway.initialize();
 
-  // Get configuration to determine port
+  // Get configuration to determine port and host
   const config = await configManager.load();
-  const port = config.gateway.port;
-  const host = config.gateway.host;
+
+  // Port precedence: CLI flag > Environment variable > Config file > Default
+  const port = cliPort
+    || (process.env.MCP2REST_PORT ? parseInt(process.env.MCP2REST_PORT, 10) : undefined)
+    || config.gateway.port;
+
+  // Host precedence: CLI flag > Environment variable > Config file > Default
+  const host = cliHost
+    || process.env.MCP2REST_HOST
+    || config.gateway.host;
 
   // Create and start API server
   const apiServer = new APIServer(gateway);
   await apiServer.start(port, host);
 
-  console.log(`Gateway started on port ${port}`);
+  console.log(`Gateway started on ${host}:${port}`);
 
   // Setup graceful shutdown handlers
   const shutdown = async () => {

@@ -189,8 +189,14 @@ This specification can be used with Swagger UI, Postman, or other OpenAPI tools 
 ### Gateway Management
 
 ```bash
-# Start gateway in foreground
+# Start gateway in foreground (default port 3000)
 mcp2rest start
+
+# Start with custom port and host
+mcp2rest start --port 4000 --host 0.0.0.0
+
+# Start with custom config file
+mcp2rest start --config /path/to/config.yaml
 
 # Stop gateway
 mcp2rest stop
@@ -246,6 +252,69 @@ gateway:
   timeout: 30000
   logLevel: info
 ```
+
+### Port and Host Configuration
+
+mcp2rest supports multiple ways to configure the port and host, with the following precedence order (highest to lowest):
+
+1. **CLI Flags** (highest priority)
+2. **Environment Variables**
+3. **Configuration File**
+4. **Default Values** (port: 3000, host: localhost)
+
+#### Using CLI Flags
+
+```bash
+# Start with custom port
+mcp2rest start --port 4000
+
+# Start with custom host
+mcp2rest start --host 0.0.0.0
+
+# Start with both
+mcp2rest start --port 4000 --host 0.0.0.0
+```
+
+#### Using Environment Variables
+
+```bash
+# Set port via environment variable
+MCP2REST_PORT=4000 mcp2rest start
+
+# Set host via environment variable
+MCP2REST_HOST=0.0.0.0 mcp2rest start
+
+# Set both
+MCP2REST_PORT=4000 MCP2REST_HOST=0.0.0.0 mcp2rest start
+```
+
+#### Using Configuration File
+
+Edit `~/.mcp2rest/config.yaml`:
+
+```yaml
+gateway:
+  port: 4000
+  host: 0.0.0.0
+```
+
+#### Changing Service Port
+
+To change the port of an installed service:
+
+```bash
+# 1. Edit the configuration file
+nano ~/.mcp2rest/config.yaml
+# Change gateway.port to your desired port
+
+# 2. Reinstall the service (updates PM2 config)
+mcp2rest service install
+
+# 3. Restart the service
+mcp2rest service restart
+```
+
+The service install command automatically reads the port and host from your config file and configures the PM2 service accordingly.
 
 ## Example: Python Client
 
@@ -323,6 +392,13 @@ Common error codes:
 - npm or npx
 
 ## Recently Completed ✅
+
+- [x] **Custom Port & Host Configuration** (v0.2.8)
+  - CLI flags: `--port` and `--host` for start command
+  - Environment variables: `MCP2REST_PORT` and `MCP2REST_HOST`
+  - Precedence order: CLI flags > Environment variables > Config file > Defaults
+  - PM2 service integration: Automatically configures service with config file settings
+  - Dynamic port detection for `add` and `remove` CLI commands
 
 - [x] **Auto-Reconnect**: Automatic reconnection with exponential backoff when MCP servers disconnect
   - Implemented in `src/gateway/Gateway.ts`

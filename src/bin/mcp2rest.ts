@@ -29,6 +29,8 @@ program
   .command('start')
   .description('Start the MCP Gateway daemon')
   .option('-c, --config <path>', 'Path to configuration file')
+  .option('-p, --port <number>', 'Port to listen on (overrides config and env)', parseInt)
+  .option('-H, --host <string>', 'Host to bind to (overrides config and env)')
   .action(async (options) => {
     try {
       // Check if PM2 service is already running (skip check if running under PM2)
@@ -45,9 +47,9 @@ program
           // Service not found or not running, continue with foreground start
         }
       }
-      
+
       // Start the server using the shared server entry point
-      const { gateway, apiServer } = await startServer(options.config);
+      const { gateway, apiServer } = await startServer(options.config, options.port, options.host);
 
       // Write PID file for foreground mode process management
       const configDir = path.join(os.homedir(), '.mcp2rest');
@@ -184,6 +186,10 @@ service
       const logsDir = path.join(configDir, 'logs');
       await fs.mkdir(logsDir, { recursive: true });
 
+      // Load current configuration to get port and host settings
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+
       // Generate PM2 ecosystem config dynamically
       console.log('Generating PM2 configuration...');
 
@@ -208,7 +214,9 @@ service
           watch: false,
           max_memory_restart: '500M',
           env: {
-            NODE_ENV: 'production'
+            NODE_ENV: 'production',
+            MCP2REST_PORT: config.gateway.port.toString(),
+            MCP2REST_HOST: config.gateway.host
           },
           error_file: path.join(logsDir, 'error.log'),
           out_file: path.join(logsDir, 'out.log'),
@@ -439,11 +447,17 @@ program
 
       console.log(`Adding server '${name}' via ${transport} (${packageOrUrl})...`);
 
-      // Get configuration to determine API port
+      // Get configuration to determine API port and host
       const configManager = new ConfigManager();
       const config = await configManager.load();
-      const port = config.gateway.port;
-      const host = config.gateway.host;
+
+      // Port precedence: Environment variable > Config file > Default
+      const port = process.env.MCP2REST_PORT
+        ? parseInt(process.env.MCP2REST_PORT, 10)
+        : config.gateway.port;
+
+      // Host precedence: Environment variable > Config file > Default
+      const host = process.env.MCP2REST_HOST || config.gateway.host;
 
       // Build request body based on transport type
       const requestBody: any = { name, transport };
@@ -492,12 +506,18 @@ program
   .action(async (name: string) => {
     try {
       console.log(`Removing server '${name}'...`);
-      
-      // Get configuration to determine API port
+
+      // Get configuration to determine API port and host
       const configManager = new ConfigManager();
       const config = await configManager.load();
-      const port = config.gateway.port;
-      const host = config.gateway.host;
+
+      // Port precedence: Environment variable > Config file > Default
+      const port = process.env.MCP2REST_PORT
+        ? parseInt(process.env.MCP2REST_PORT, 10)
+        : config.gateway.port;
+
+      // Host precedence: Environment variable > Config file > Default
+      const host = process.env.MCP2REST_HOST || config.gateway.host;
       
       // Send DELETE request to /servers/:name endpoint
       const response = await fetch(`http://${host}:${port}/servers/${name}`, {
