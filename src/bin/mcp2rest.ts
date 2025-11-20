@@ -469,6 +469,65 @@ service
     }
   });
 
+// Service stop command
+service
+  .command('stop')
+  .description('Stop MCP Gateway service')
+  .action(async () => {
+    try {
+      // Check if service exists
+      try {
+        await execAsync('npx pm2 describe mcp2rest');
+      } catch (error) {
+        console.log('✗ MCP Gateway service is not installed');
+        console.log('Install it with: mcp2rest service install');
+        process.exit(1);
+      }
+
+      // Stop the service
+      await execAsync('npx pm2 stop mcp2rest');
+      console.log('✓ MCP Gateway service stopped');
+      console.log('\nNote: PM2 will auto-restart the service.');
+      console.log('Use "mcp2rest service uninstall" to remove permanently.\n');
+
+    } catch (error: any) {
+      console.error('✗ Failed to stop service:', error.message);
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+      process.exit(1);
+    }
+  });
+
+// Service restart command
+service
+  .command('restart')
+  .description('Restart MCP Gateway service')
+  .action(async () => {
+    try {
+      // Check if service exists
+      try {
+        await execAsync('npx pm2 describe mcp2rest');
+      } catch (error) {
+        console.log('✗ MCP Gateway service is not installed');
+        console.log('Install it with: mcp2rest service install');
+        process.exit(1);
+      }
+
+      // Restart the service
+      console.log('Restarting MCP Gateway service...');
+      await execAsync('npx pm2 restart mcp2rest');
+      console.log('✓ MCP Gateway service restarted successfully\n');
+
+    } catch (error: any) {
+      console.error('✗ Failed to restart service:', error.message);
+      if (error.stderr) {
+        console.error(error.stderr);
+      }
+      process.exit(1);
+    }
+  });
+
 // Add command - adds a new MCP server
 program
   .command('add <name> <package-or-url>')
