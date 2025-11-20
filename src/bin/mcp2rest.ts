@@ -328,45 +328,81 @@ service
   .description('Check MCP Gateway service status')
   .action(async () => {
     try {
+      // Get configuration to determine API port and host
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+
+      // Port precedence: Environment variable > Config file > Default
+      const port = process.env.MCP2REST_PORT
+        ? parseInt(process.env.MCP2REST_PORT, 10)
+        : config.gateway.port;
+
+      // Host precedence: Environment variable > Config file > Default
+      const host = process.env.MCP2REST_HOST || config.gateway.host;
+
+      // Check if service is running via HTTP health check
+      let apiStatus = 'offline';
+      let serverCount = 0;
+      let connectedServers = 0;
+
+      try {
+        const response = await fetch(`http://${host}:${port}/health`);
+        if (response.ok) {
+          const healthData = await response.json() as any;
+          apiStatus = healthData.status === 'ok' ? 'online' : 'degraded';
+          serverCount = healthData.serverCount || 0;
+          connectedServers = healthData.connectedServers || 0;
+        }
+      } catch (error) {
+        // Health check failed - service is offline or not responding
+        apiStatus = 'offline';
+      }
+
       // Get process info from PM2
-      const { stdout } = await execAsync('npx pm2 describe mcp2rest');
-      
-      // Parse the output to extract key information
-      const lines = stdout.split('\n');
-      let status = 'unknown';
       let uptime = 'N/A';
       let memory = 'N/A';
       let cpu = 'N/A';
       let restarts = 'N/A';
-      
-      for (const line of lines) {
-        if (line.includes('status')) {
-          const match = line.match(/│\s*status\s*│\s*(\w+)\s*│/);
-          if (match) status = match[1];
-        } else if (line.includes('uptime')) {
-          const match = line.match(/│\s*uptime\s*│\s*(.+?)\s*│/);
-          if (match) uptime = match[1].trim();
-        } else if (line.includes('memory')) {
-          const match = line.match(/│\s*memory\s*│\s*(.+?)\s*│/);
-          if (match) memory = match[1].trim();
-        } else if (line.includes('cpu')) {
-          const match = line.match(/│\s*cpu\s*│\s*(.+?)\s*│/);
-          if (match) cpu = match[1].trim();
-        } else if (line.includes('restarts')) {
-          const match = line.match(/│\s*restarts\s*│\s*(\d+)\s*│/);
-          if (match) restarts = match[1];
+
+      try {
+        const { stdout } = await execAsync('npx pm2 describe mcp2rest');
+        const lines = stdout.split('\n');
+
+        for (const line of lines) {
+          if (line.includes('uptime')) {
+            const match = line.match(/│\s*uptime\s*│\s*(.+?)\s*│/);
+            if (match) uptime = match[1].trim();
+          } else if (line.includes('memory')) {
+            const match = line.match(/│\s*memory\s*│\s*(.+?)\s*│/);
+            if (match) memory = match[1].trim();
+          } else if (line.includes('cpu')) {
+            const match = line.match(/│\s*cpu\s*│\s*(.+?)\s*│/);
+            if (match) cpu = match[1].trim();
+          } else if (line.includes('restarts')) {
+            const match = line.match(/│\s*restarts\s*│\s*(\d+)\s*│/);
+            if (match) restarts = match[1];
+          }
         }
+      } catch (error) {
+        // PM2 process not found - will be handled below
       }
-      
+
       console.log('\nMCP Gateway Service Status:');
       console.log('═══════════════════════════════════════');
-      console.log(`Status:   ${status === 'online' ? '🟢' : '🔴'} ${status}`);
+      console.log(`Status:   ${apiStatus === 'online' ? '🟢' : '🔴'} ${apiStatus}`);
+      console.log(`API:      http://${host}:${port}`);
+      console.log(`Servers:  ${connectedServers}/${serverCount}`);
       console.log(`Uptime:   ${uptime}`);
       console.log(`Memory:   ${memory}`);
       console.log(`CPU:      ${cpu}`);
       console.log(`Restarts: ${restarts}`);
       console.log('═══════════════════════════════════════\n');
-      
+
+      // Exit with error if service is offline
+      if (apiStatus === 'offline') {
+        process.exit(1);
+      }
+
     } catch (error: any) {
       if (error.message.includes('not found') || error.stderr?.includes('not found') || error.stderr?.includes("doesn't exist")) {
         console.log('\n✗ MCP Gateway service is not installed');
