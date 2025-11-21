@@ -46,7 +46,7 @@ mcp2rest add context7 https://mcp.context7.com/mcp \
 
 **API Request:**
 ```bash
-curl -X POST http://localhost:3000/servers \
+curl -X POST http://localhost:28888/servers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "context7",
@@ -339,7 +339,7 @@ mcp2rest list
 
 **Setup:**
 ```bash
-curl -X POST http://localhost:3000/servers \
+curl -X POST http://localhost:28888/servers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "test-http",
@@ -352,7 +352,7 @@ curl -X POST http://localhost:3000/servers \
 
 **Verify:**
 ```bash
-curl http://localhost:3000/servers
+curl http://localhost:28888/servers
 # Should include test-http in the list
 ```
 

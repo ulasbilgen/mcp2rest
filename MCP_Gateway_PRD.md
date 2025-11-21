@@ -27,7 +27,7 @@
           ┌────────▼────────┐
           │  mcp2rest    │
           │  (Node.js)      │
-          │  Port: 3000     │
+          │  Port: 28888     │
           └────────┬────────┘
                    │
        ┌───────────┼───────────┐
@@ -113,7 +113,7 @@ servers:
     args: ["/home/user/workspace"]
 
 gateway:
-  port: 3000
+  port: 28888
   host: localhost
   timeout: 30000  # Global tool execution timeout (ms)
   logLevel: info  # debug | info | warn | error
@@ -208,7 +208,7 @@ mcp2rest service uninstall
 
 ### 4. REST API Design
 
-**Base URL:** `http://localhost:3000`
+**Base URL:** `http://localhost:28888`
 
 #### `GET /health`
 Health check with server count.
@@ -790,7 +790,7 @@ mcp2rest start
 mcp2rest add chrome chrome-devtools-mcp@latest
 
 # Use from Python
-curl -X POST http://localhost:3000/call \
+curl -X POST http://localhost:28888/call \
   -H "Content-Type: application/json" \
   -d '{
     "server": "chrome",
@@ -798,7 +798,7 @@ curl -X POST http://localhost:3000/call \
     "arguments": {"url": "https://example.com"}
   }'
 
-curl -X POST http://localhost:3000/call \
+curl -X POST http://localhost:28888/call \
   -H "Content-Type: application/json" \
   -d '{
     "server": "chrome",
@@ -813,7 +813,7 @@ curl -X POST http://localhost:3000/call \
 mcp2rest add fs @modelcontextprotocol/server-filesystem --args /home/user/workspace
 
 # List files
-curl http://localhost:3000/call \
+curl http://localhost:28888/call \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{
@@ -834,12 +834,12 @@ mcp2rest add github @modelcontextprotocol/server-github
 mcp2rest add fs @modelcontextprotocol/server-filesystem --args ~/projects
 
 # List all servers via API
-curl http://localhost:3000/servers
+curl http://localhost:28888/servers
 
 # Check tools for each via API
-curl http://localhost:3000/servers/chrome/tools
-curl http://localhost:3000/servers/github/tools
-curl http://localhost:3000/servers/fs/tools
+curl http://localhost:28888/servers/chrome/tools
+curl http://localhost:28888/servers/github/tools
+curl http://localhost:28888/servers/fs/tools
 ```
 
 ---

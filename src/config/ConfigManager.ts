@@ -131,7 +131,7 @@ export class ConfigManager {
     return {
       servers: {},
       gateway: {
-        port: 3000,
+        port: 28888,
         host: 'localhost',
         timeout: 30000,
         logLevel: 'info'

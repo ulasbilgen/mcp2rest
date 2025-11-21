@@ -48,7 +48,7 @@ mcp2rest add chrome chrome-devtools-mcp@latest
 Use any HTTP client to call tools:
 
 ```bash
-curl -X POST http://localhost:3000/call \
+curl -X POST http://localhost:28888/call \
   -H "Content-Type: application/json" \
   -d '{
     "server": "chrome",
@@ -179,7 +179,7 @@ Get the complete API specification in OpenAPI/Swagger format.
 
 **Example:**
 ```bash
-curl http://localhost:3000/openapi.yaml > mcp2rest-api.yaml
+curl http://localhost:28888/openapi.yaml > mcp2rest-api.yaml
 ```
 
 This specification can be used with Swagger UI, Postman, or other OpenAPI tools to explore and test the API.
@@ -189,7 +189,7 @@ This specification can be used with Swagger UI, Postman, or other OpenAPI tools 
 ### Gateway Management
 
 ```bash
-# Start gateway in foreground (default port 3000)
+# Start gateway in foreground (default port 28888)
 mcp2rest start
 
 # Start with custom port and host
@@ -247,7 +247,7 @@ servers:
     args: ["/home/user/workspace"]
 
 gateway:
-  port: 3000
+  port: 28888
   host: localhost
   timeout: 30000
   logLevel: info
@@ -260,7 +260,7 @@ mcp2rest supports multiple ways to configure the port and host, with the followi
 1. **CLI Flags** (highest priority)
 2. **Environment Variables**
 3. **Configuration File**
-4. **Default Values** (port: 3000, host: localhost)
+4. **Default Values** (port: 28888, host: localhost)
 
 #### Using CLI Flags
 
@@ -322,7 +322,7 @@ The service install command automatically reads the port and host from your conf
 import requests
 
 # Execute a tool
-response = requests.post('http://localhost:3000/call', json={
+response = requests.post('http://localhost:28888/call', json={
     'server': 'chrome',
     'tool': 'navigate',
     'arguments': {
@@ -356,7 +356,7 @@ func main() {
     
     jsonData, _ := json.Marshal(payload)
     resp, _ := http.Post(
-        "http://localhost:3000/call",
+        "http://localhost:28888/call",
         "application/json",
         bytes.NewBuffer(jsonData),
     )
