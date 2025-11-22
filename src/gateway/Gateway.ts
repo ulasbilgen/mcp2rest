@@ -139,16 +139,60 @@ export class Gateway {
         capabilities: {}
       });
 
-      // Connect client to transport
-      await client.connect(transport);
+      let tools: Tool[] = [];
+      let hasValidationWarning = false;
+      let validationWarningMsg = '';
 
-      // List available tools
-      const toolsResponse = await client.listTools();
-      const tools: Tool[] = toolsResponse.tools.map((tool: any) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema
-      }));
+      try {
+        // Connect client to transport
+        await client.connect(transport);
+
+        // List available tools
+        const toolsResponse = await client.listTools();
+        tools = toolsResponse.tools.map((tool: any) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema
+        }));
+
+      } catch (error: any) {
+        // Check if this is a Zod validation error from MCP SDK
+        // Error can be either a string or a stringified JSON array
+        const errorStr = typeof error.message === 'string' ? error.message : JSON.stringify(error);
+        const isValidationError = errorStr && (
+          errorStr.includes('Expected array') ||
+          errorStr.includes('Expected object') ||
+          errorStr.includes('invalid_type') ||
+          errorStr.includes('ZodError') ||
+          errorStr.includes('"code":"invalid_type"') ||
+          errorStr.includes('"code": "invalid_type"')
+        );
+
+        if (isValidationError) {
+          // This is a schema validation error - allow connection with warning
+          hasValidationWarning = true;
+          validationWarningMsg = `Schema validation warning: Server may not be fully MCP-compliant`;
+
+          console.warn(`⚠ Server '${name}' has schema validation issues but will attempt to connect`);
+          console.warn(`  Warning: ${error.message}`);
+
+          // Try to list tools anyway (might work despite init validation failure)
+          try {
+            const toolsResponse = await client.listTools();
+            tools = toolsResponse.tools.map((tool: any) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema
+            }));
+          } catch (toolsError) {
+            // If listing tools also fails, leave tools as empty array
+            console.warn(`  Could not list tools due to validation issues`);
+          }
+        } else {
+          // This is a real connection error - re-throw
+          throw error;
+        }
+      }
 
       // Update server state
       serverState.client = client;
@@ -157,13 +201,23 @@ export class Gateway {
       serverState.lastConnected = new Date();
       serverState.reconnectAttempts = 0;
 
+      if (hasValidationWarning) {
+        serverState.validationWarning = validationWarningMsg;
+      } else {
+        serverState.validationWarning = undefined;
+      }
+
       // Clear any existing reconnect timer
       this.clearReconnectTimer(name);
 
       // Set up disconnect handler for auto-reconnect
       this.setupDisconnectHandler(name, client);
 
-      console.log(`✓ Connected to server '${name}' with ${tools.length} tool(s)`);
+      if (hasValidationWarning) {
+        console.log(`✓ Connected to server '${name}' with ${tools.length} tool(s) (with validation warnings)`);
+      } else {
+        console.log(`✓ Connected to server '${name}' with ${tools.length} tool(s)`);
+      }
 
     } catch (error: any) {
       serverState.status = 'error';
@@ -321,7 +375,8 @@ export class Gateway {
         status: state.status,
         toolCount: state.tools.length,
         error: state.lastError,
-        lastConnected: state.lastConnected?.toISOString()
+        lastConnected: state.lastConnected?.toISOString(),
+        validationWarning: state.validationWarning
       };
 
       // Add transport-specific fields

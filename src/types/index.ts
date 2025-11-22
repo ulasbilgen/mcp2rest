@@ -25,6 +25,7 @@ export interface ServerState {
   reconnectAttempts: number;
   lastError?: string;
   lastConnected?: Date;
+  validationWarning?: string; // Warning message if server has schema validation issues
 }
 
 /**
@@ -61,6 +62,7 @@ export interface ServerInfo {
   toolCount: number;
   error?: string;
   lastConnected?: string;
+  validationWarning?: string; // Warning if server has schema validation issues
 }
 
 /**
