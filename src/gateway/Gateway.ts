@@ -2,15 +2,22 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { spawn, ChildProcess } from 'child_process';
+import { readFileSync } from 'fs';
+import * as path from 'path';
 import { ConfigManager } from '../config/ConfigManager.js';
-import { 
-  ServerState, 
-  ServerConfig, 
-  GatewayConfig, 
-  Tool, 
+import {
+  ServerState,
+  ServerConfig,
+  GatewayConfig,
+  Tool,
   ServerInfo,
-  ErrorCode 
+  ErrorCode
 } from '../types/index.js';
+
+// Read version from package.json (relative to dist/gateway/)
+const packageJson = JSON.parse(
+  readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')
+);
 
 /**
  * Core Gateway class that manages MCP server connections and tool execution
@@ -134,7 +141,7 @@ export class Gateway {
       // Create MCP client (same for both transports)
       const client = new Client({
         name: 'mcp2rest',
-        version: '0.1.0'
+        version: packageJson.version
       }, {
         capabilities: {}
       });

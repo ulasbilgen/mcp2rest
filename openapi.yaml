@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: mcp2rest API
-  version: 0.3.2
+  version: 0.4.0
   description: |
     REST API for managing and interacting with MCP (Model Context Protocol) servers.
 
@@ -474,7 +474,7 @@ paths:
                 openapi: 3.0.3
                 info:
                   title: mcp2rest API
-                  version: 0.2.6
+                  version: 0.4.0
                 ...
         '500':
           description: Failed to read specification
