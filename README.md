@@ -1,5 +1,15 @@
 # mcp2rest
 
+> **⚠️ ARCHIVED: This repository has been moved**
+>
+> This project is no longer maintained in this repository. It has been moved to:
+> **https://github.com/ulasbilgen/mcp2skill-tools**
+>
+> Please visit the new repository for the latest updates, issues, and documentation.
+> The API and CLI commands remain identical, making migration seamless.
+
+---
+
 A standalone Node.js daemon that manages multiple MCP (Model Context Protocol) servers and exposes their tools via REST API. mcp2rest provides a universal HTTP interface that allows developers using any programming language to leverage MCP tools without Node.js integration complexity.
 
 ## Features
